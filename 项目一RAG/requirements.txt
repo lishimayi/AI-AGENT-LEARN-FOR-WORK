@@ -1,0 +1,32 @@
+# ============================================================
+# 公司产品知识库 RAG 系统
+# 版本: 1.0.0
+# 描述: 基于检索增强生成的产品知识库问答系统
+# ============================================================
+
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# 文档处理
+pypdf2==3.0.1
+python-docx==1.1.0
+beautifulsoup4==4.12.3
+html2text==2020.1.16
+
+# 向量化和检索
+sentence-transformers==2.3.1
+faiss-cpu==1.7.4
+numpy==1.26.3
+
+# LLM接口
+openai==1.12.0
+
+# 配置管理
+pyyaml==6.0.1
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# 工具库
+loguru==0.7.2
+python-dotenv==1.0.0

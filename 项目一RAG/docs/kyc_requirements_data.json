@@ -1,0 +1,246 @@
+[
+  {
+    "doc_id": "REQ-KYC-001",
+    "title": "KYC实名认证系统需求文档",
+    "category": "需求文档",
+    "source": "ONES Wiki",
+    "created_at": "2026-08-11",
+    "overview": {
+      "背景": "根据监管机构要求，平台需对用户进行身份验证，以确保交易安全、防止洗钱和恐怖主义融资",
+      "目标": [
+        "实现用户身份信息的收集、验证与管理",
+        "支持多等级认证（基础认证、高级认证、企业认证）",
+        "满足监管机构的合规要求",
+        "提供安全、高效、用户体验友好的认证流程"
+      ]
+    },
+    "certification_levels": [
+      {
+        "level": "L0",
+        "name": "未认证",
+        "requirement": "无",
+        "permission": "仅浏览，限制交易",
+        "single_limit": "0 CNY",
+        "daily_limit": "0 CNY",
+        "monthly_limit": "0 CNY"
+      },
+      {
+        "level": "L1",
+        "name": "基础认证",
+        "requirement": "手机号 + 邮箱",
+        "permission": "限额交易",
+        "single_limit": "1,000 CNY",
+        "daily_limit": "5,000 CNY",
+        "monthly_limit": "50,000 CNY"
+      },
+      {
+        "level": "L2",
+        "name": "高级认证",
+        "requirement": "身份证 + 人脸识别",
+        "permission": "正常交易权限",
+        "single_limit": "100,000 CNY",
+        "daily_limit": "500,000 CNY",
+        "monthly_limit": "2,000,000 CNY"
+      },
+      {
+        "level": "L3",
+        "name": "视频认证",
+        "requirement": "视频人工审核",
+        "permission": "提高限额",
+        "single_limit": "500,000 CNY",
+        "daily_limit": "2,000,000 CNY",
+        "monthly_limit": "10,000,000 CNY"
+      },
+      {
+        "level": "L4",
+        "name": "企业认证",
+        "requirement": "营业执照 + 对公账户",
+        "permission": "企业用户全功能",
+        "single_limit": "无限制",
+        "daily_limit": "无限制",
+        "monthly_limit": "无限制"
+      }
+    ],
+    "requirements": [
+      {
+        "id": "KYC-101",
+        "level": "L1",
+        "type": "基础认证",
+        "title": "用户可通过手机号注册并完成验证",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-102",
+        "level": "L1",
+        "type": "基础认证",
+        "title": "用户可通过邮箱注册并完成验证",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-103",
+        "level": "L1",
+        "type": "基础认证",
+        "title": "支持手机号 + 邮箱双重绑定",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-104",
+        "level": "L1",
+        "type": "基础认证",
+        "title": "发送短信验证码（60秒倒计时）",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-105",
+        "level": "L1",
+        "type": "基础认证",
+        "title": "发送邮件验证码（5分钟有效）",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-106",
+        "level": "L1",
+        "type": "基础认证",
+        "title": "支持验证码错误次数限制（5次）",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-107",
+        "level": "L1",
+        "type": "基础认证",
+        "title": "支持验证码过期后重新发送",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-201",
+        "level": "L2",
+        "type": "身份认证",
+        "title": "支持身份证信息录入（姓名、证件号、有效期）",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-202",
+        "level": "L2",
+        "type": "身份认证",
+        "title": "支持身份证正反面照片上传",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-203",
+        "level": "L2",
+        "type": "身份认证",
+        "title": "支持身份证 OCR 自动识别",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-204",
+        "level": "L2",
+        "type": "身份认证",
+        "title": "支持活体检测（眨眼、张嘴、摇头等）",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-205",
+        "level": "L2",
+        "type": "身份认证",
+        "title": "支持人脸识别与证件照比对",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-206",
+        "level": "L2",
+        "type": "身份认证",
+        "title": "认证结果即时返回",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-207",
+        "level": "L2",
+        "type": "身份认证",
+        "title": "支持认证失败原因展示与重新提交",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-301",
+        "level": "L3",
+        "type": "视频认证",
+        "title": "支持录制认证视频（15-30秒）",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-302",
+        "level": "L3",
+        "type": "视频认证",
+        "title": "视频需朗读指定语句或回答随机问题",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-303",
+        "level": "L3",
+        "type": "视频认证",
+        "title": "视频上传至云存储（加密）",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-401",
+        "level": "L4",
+        "type": "企业认证",
+        "title": "企业基本信息录入（名称、统一社会信用代码）",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-402",
+        "level": "L4",
+        "type": "企业认证",
+        "title": "营业执照上传与 OCR 识别",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-403",
+        "level": "L4",
+        "type": "企业认证",
+        "title": "法人身份认证（流程同 L2）",
+        "priority": "P0"
+      },
+      {
+        "id": "KYC-404",
+        "level": "L4",
+        "type": "企业认证",
+        "title": "对公银行账户验证（打款验证）",
+        "priority": "P0"
+      }
+    ],
+    "auto_audit_rules": [
+      {"rule_id": "AR-001", "description": "证件照片清晰度不足", "action": "自动拒绝，要求重新上传"},
+      {"rule_id": "AR-002", "description": "证件信息与录入信息不一致", "action": "自动拒绝"},
+      {"rule_id": "AR-003", "description": "人脸比对相似度 < 80%", "action": "自动拒绝"},
+      {"rule_id": "AR-004", "description": "活体检测未通过", "action": "自动拒绝，提示重试"},
+      {"rule_id": "AR-005", "description": "证件有效期已过", "action": "自动拒绝"},
+      {"rule_id": "AR-006", "description": "证件号已被其他账号使用", "action": "自动拒绝，转人工复核"},
+      {"rule_id": "AR-007", "description": "用户年龄 < 18岁", "action": "自动拒绝"},
+      {"rule_id": "AR-008", "description": "用户在黑名单中", "action": "自动拒绝，通知风控"}
+    ],
+    "audit_time_requirements": [
+      {"level": "L1 基础认证", "auto": "即时", "manual": "-"},
+      {"level": "L2 高级认证", "auto": "即时", "manual": "-"},
+      {"level": "L3 视频认证", "auto": "-", "manual": "24小时内"},
+      {"level": "L4 企业认证", "auto": "-", "manual": "48小时内"}
+    ],
+    "third_party_services": [
+      {"service": "阿里云实人认证", "function": "人脸识别、活体检测"},
+      {"service": "腾讯云人脸核身", "function": "人脸比对、身份二要素"},
+      {"service": "公安部一所", "function": "身份证真伪验证"},
+      {"service": "支付宝实名认证", "function": "支付宝账户验证"}
+    ],
+    "milestone": [
+      {"phase": "M1 需求评审", "timeline": "Week 1-2"},
+      {"phase": "M2 系统架构设计", "timeline": "Week 3"},
+      {"phase": "M3 L1基础认证开发", "timeline": "Week 4-5"},
+      {"phase": "M4 L2高级认证开发", "timeline": "Week 6-8"},
+      {"phase": "M5 L3/L4高级认证开发", "timeline": "Week 9-12"},
+      {"phase": "M6 测试与UAT", "timeline": "Week 13-14"},
+      {"phase": "M7 生产部署与灰度", "timeline": "Week 15"},
+      {"phase": "M8 正式上线", "timeline": "Week 16"}
+    ]
+  }
+]

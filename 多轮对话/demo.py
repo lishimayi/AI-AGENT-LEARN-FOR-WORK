@@ -2,6 +2,8 @@ import os
 
 from openai import OpenAI
 from dotenv import load_dotenv
+# 查询 token 余额
+from zai_quota import print_quota, fetch_json, QUOTA_ENDPOINTS
 
 def main() -> None:
     # 读取项目根目录下 .env 中的环境变量
@@ -12,7 +14,7 @@ def main() -> None:
         {"role": "user", "content": "你好，请做个自我介绍。"},
     ]
     # 创建客户端
-    api_key = os.getenv("ZHIPUAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("ZHIPUAI_API_KEY")
     if not api_key:
         raise ValueError("请先在 .env 中设置 ZHIPUAI_API_KEY 或 OPENAI_API_KEY")
     client = OpenAI(
@@ -23,7 +25,7 @@ def main() -> None:
     ConversationHistory.append({"role": "user", "content": user_message_1})
     # 第一轮对话
     response = client.chat.completions.create(
-        model="glm-4-plus",
+        model="glm-4-flash",
         messages=ConversationHistory,
         temperature=0.7,
     )
@@ -31,6 +33,8 @@ def main() -> None:
     # 第二轮对话
     user_message_2 = response.choices[0].message.content
     ConversationHistory.append({"role": "assistant", "content": user_message_2})
+
+    print_quota(fetch_json(api_key=api_key, endpoints=QUOTA_ENDPOINTS, endpoint="cn"))
 
 if __name__ == "__main__":
     main()

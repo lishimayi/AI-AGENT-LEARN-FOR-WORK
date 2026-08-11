@@ -1,0 +1,80 @@
+# ============================================================
+# 企业级产品需求智能 Agent - Docker Compose 配置
+# ============================================================
+
+version: '3.8'
+
+services:
+  # 后端 API 服务
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    container_name: enterprise-rag-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DB_USER=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis}
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # PostgreSQL 数据库
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: enterprise-rag-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+      - POSTGRES_DB=enterprise_agent
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: enterprise-rag-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # 前端 (可选 - 如果需要 Docker 部署前端)
+  # frontend:
+  #   build:
+  #     context: ../frontend
+  #     dockerfile: ../deploy/Dockerfile.frontend
+  #   container_name: enterprise-rag-frontend
+  #   ports:
+  #     - "3000:80"
+  #   depends_on:
+  #     - backend
+  #   networks:
+  #     - rag-network
+
+networks:
+  rag-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

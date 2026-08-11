@@ -1,0 +1,219 @@
+# 企业级产品需求智能 Agent 配置
+
+# ============================================================
+# LLM 模型配置 (支持多模型切换)
+# ============================================================
+llm:
+  # 当前使用的模型提供商: openai / anthropic / zhipu / qwen
+  provider: "openai"
+  
+  # OpenAI 配置
+  openai:
+    model: "gpt-4o-mini"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "https://api.openai.com/v1"
+    temperature: 0.3
+    max_tokens: 4096
+  
+  # Anthropic (Claude) 配置
+  anthropic:
+    model: "claude-3-haiku-20240307"
+    api_key: "${ANTHROPIC_API_KEY}"
+    temperature: 0.3
+    max_tokens: 4096
+  
+  # 智谱 GLM 配置
+  zhipu:
+    model: "glm-4"
+    api_key: "${ZHIPU_API_KEY}"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    temperature: 0.3
+  
+  # 阿里通义千问配置
+  qwen:
+    model: "qwen-turbo"
+    api_key: "${DASHSCOPE_API_KEY}"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    temperature: 0.3
+
+# ============================================================
+# Embedding 配置
+# ============================================================
+embedding:
+  # 向量模型
+  model: "sentence-transformers/all-MiniLM-L6-v2"
+  dimension: 384
+  device: "cpu"  # cpu / cuda
+  batch_size: 32
+  
+  # 中文优化模型 (可选)
+  chinese_model: "shibing624/text2vec-base-chinese"
+  chinese_dimension: 768
+
+# ============================================================
+# 向量数据库配置
+# ============================================================
+vector_db:
+  # 类型: chroma / pgvector / faiss / milvus
+  type: "milvus"
+  
+  # Milvus 配置
+  milvus:
+    host: "${MILVUS_HOST}"
+    port: "${MILVUS_PORT}"
+    collection_name: "enterprise_knowledge"
+    dimension: 384
+    index_type: "HNSW"  # HNSW / IVF_FLAT / FLAT
+    metric_type: "IP"   # IP (内积) / L2 / COSINE
+    index_params:
+      M: 16            # HNSW M 参数
+      efConstruction: 128  # HNSW 构建参数
+  
+  # Chroma 配置
+  chroma:
+    persist_directory: "./data/chroma"
+    collection_name: "enterprise_knowledge"
+  
+  # PostgreSQL + pgvector 配置
+  pgvector:
+    host: "localhost"
+    port: 5432
+    database: "rag_knowledge"
+    user: "${DB_USER}"
+    password: "${DB_PASSWORD}"
+  
+  # FAISS 配置 (单机备选)
+  faiss:
+    index_path: "./data/faiss_index"
+    metadata_path: "./data/faiss_metadata.json"
+
+# ============================================================
+# PostgreSQL 配置 (关系型数据存储)
+# ============================================================
+database:
+  host: "localhost"
+  port: 5432
+  database: "enterprise_agent"
+  user: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  pool_size: 10
+  max_overflow: 20
+
+# ============================================================
+# Redis 配置 (缓存 & 会话)
+# ============================================================
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: "${REDIS_PASSWORD}"
+  session_ttl: 3600  # 会话过期时间(秒)
+
+# ============================================================
+# 文档处理配置
+# ============================================================
+document:
+  chunk_size: 500
+  chunk_overlap: 50
+  supported_formats: [".pdf", ".docx", ".txt", ".md", ".html", ".pptx"]
+  upload_folder: "./data/uploads"
+  max_file_size: 52428800  # 50MB
+
+# ============================================================
+# RAG 检索配置
+# ============================================================
+retrieval:
+  # 检索参数
+  top_k: 5
+  similarity_threshold: 0.5
+  
+  # Hybrid Retrieval 配置
+  hybrid:
+    enable: true
+    vector_weight: 0.7
+    keyword_weight: 0.3
+  
+  # BM25 关键词检索配置
+  bm25:
+    enable: true
+    k1: 1.5
+    b: 0.75
+  
+  # 重排序配置
+  reranker:
+    enable: false
+    model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    top_n: 3
+
+# ============================================================
+# Agent 配置
+# ============================================================
+agent:
+  # 系统提示词
+  system_prompt: |
+    你是一个企业级产品需求智能助手，专门帮助研发人员理解业务需求。
+    你的职责包括：
+    1. 理解用户关于产品需求、技术文档、接口规范的问题
+    2. 检索相关文档并提供准确答案
+    3. 分析业务流程和影响范围
+    4. 关联需求、模块、接口、版本等信息
+    
+    回答要求：
+    - 基于检索到的知识库内容回答
+    - 如果知识库没有相关信息，明确告知用户
+    - 提供清晰的引用来源
+    - 复杂问题分解步骤回答
+  
+  # ReAct Agent 配置
+  react:
+    max_iterations: 10
+    max_execution_time: 120
+    early_stopping: true
+  
+  # Workflow 配置
+  workflow:
+    enable_human_in_loop: false
+    confirmation_threshold: "high"  # low / medium / high
+  
+  # LangSmith 配置 (可观测性)
+  langsmith:
+    enable: false
+    api_key: "${LANGSMITH_API_KEY}"
+    project: "enterprise-agent"
+    tags: ["production", "rag"]
+
+# ============================================================
+# API 服务配置
+# ============================================================
+api:
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+  workers: 4
+  
+  # CORS 配置
+  cors:
+    allow_origins: ["*"]
+    allow_credentials: true
+    allow_methods: ["*"]
+    allow_headers: ["*"]
+  
+  # WebSocket 配置
+  websocket:
+    ping_interval: 30
+    ping_timeout: 10
+  
+  # 限流配置
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60
+
+# ============================================================
+# 日志配置
+# ============================================================
+logging:
+  level: "INFO"  # DEBUG / INFO / WARNING / ERROR
+  format: "<green>{time}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>"
+  file: "./logs/agent.log"
+  rotation: "500 MB"
+  retention: "30 days"
