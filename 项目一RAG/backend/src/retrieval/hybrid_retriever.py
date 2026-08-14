@@ -177,25 +177,43 @@ class HybridRetriever:
     """
     混合检索器
     结合向量检索和 BM25 关键词检索
+    支持多种向量数据库：FAISS / Chroma / Milvus
     """
-    
+
     _instance: Optional['HybridRetriever'] = None
-    
+
     def __init__(self, vector_config: Optional[Dict] = None, retrieval_config: Optional[Dict] = None):
         self.vector_config = vector_config or config.vector_db
         self.retrieval_config = retrieval_config or config.retrieval
-        
-        # 初始化子检索器
-        embedding_config = config.embedding
-        self.vector_retriever = VectorRetriever(embedding_config)
+        self.embedding_config = config.embedding
+
+        # 根据配置选择向量数据库类型
+        self.vector_db_type = self.vector_config.get("type", "faiss")
+        logger.info(f"Vector database type: {self.vector_db_type}")
+
+        # 初始化向量检索器
+        self.vector_retriever = self._create_vector_retriever()
         self.bm25_retriever = BM25Retriever()
-        
+
         # 混合检索权重
         hybrid_config = self.retrieval_config.get("hybrid", {})
         self.vector_weight = hybrid_config.get("vector_weight", 0.7)
         self.keyword_weight = hybrid_config.get("keyword_weight", 0.3)
-        
+
         self.documents: List[Dict] = []
+
+    def _create_vector_retriever(self):
+        """根据配置创建对应的向量检索器"""
+        db_type = self.vector_db_type
+
+        if db_type == "milvus":
+            return MilvusRetriever(self.vector_config.get("milvus", {}))
+        elif db_type == "chroma":
+            return ChromaRetriever(self.vector_config.get("chroma", {}))
+        elif db_type == "pgvector":
+            return PGVectorRetriever(self.vector_config.get("pgvector", {}))
+        else:
+            return VectorRetriever(self.embedding_config)
         
     @classmethod
     def get_instance(cls) -> 'HybridRetriever':
@@ -299,55 +317,305 @@ class HybridRetriever:
 
 class ChromaRetriever:
     """Chroma 向量数据库检索器 (可选替代方案)"""
-    
-    def __init__(self, collection_name: str = "enterprise_knowledge"):
+
+    def __init__(self, chroma_config: Optional[Dict] = None):
         try:
             import chromadb
-            from chromadb.config import Settings
-            
-            persist_dir = self.vector_config.get("chroma", {}).get("persist_directory", "./data/chroma")
-            
+
+            persist_dir = chroma_config.get("persist_directory", "./data/chroma")
+            collection_name = chroma_config.get("collection_name", "enterprise_knowledge")
+
             self.client = chromadb.PersistentClient(path=persist_dir)
             self.collection = self.client.get_or_create_collection(name=collection_name)
-            
+            self._model = None
+
             logger.info(f"Chroma collection '{collection_name}' initialized")
         except ImportError:
-            logger.warning("Chroma not installed, using FAISS fallback")
+            logger.warning("Chroma not installed")
             self.client = None
             self.collection = None
-    
+
+    def _get_model(self):
+        if self._model is None:
+            self._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        return self._model
+
     def add_documents(self, documents: List[Dict], embeddings: np.ndarray):
         """添加文档"""
         if self.collection is None:
             return
-        
+
         ids = [f"doc_{i}" for i in range(len(documents))]
         contents = [doc.get("content", "") for doc in documents]
         metadatas = [doc.get("metadata", {}) for doc in documents]
-        
+
         self.collection.add(
             ids=ids,
             documents=contents,
             embeddings=embeddings.tolist(),
             metadatas=metadatas
         )
-    
-    def search(self, query_embedding: List[float], top_k: int = 5) -> List[Dict]:
+
+    def index_documents(self, documents: List[Dict]):
+        """索引文档"""
+        if self.collection is None:
+            return
+
+        ids = [f"doc_{i}" for i in range(len(documents))]
+        contents = [doc.get("content", "") for doc in documents]
+        metadatas = [doc.get("metadata", {}) for doc in documents]
+
+        model = self._get_model()
+        embeddings = model.encode(contents).tolist()
+
+        self.collection.add(
+            ids=ids,
+            documents=contents,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
+
+    def search(self, query: str, top_k: int = 5) -> List[Tuple[int, float, Dict]]:
         """搜索"""
         if self.collection is None:
             return []
-        
+
+        model = self._get_model()
+        query_embedding = model.encode([query]).tolist()
+
         results = self.collection.query(
-            query_embeddings=[query_embedding],
+            query_embeddings=query_embedding,
             n_results=top_k
         )
-        
+
         output = []
         for i in range(len(results["documents"][0])):
-            output.append({
-                "content": results["documents"][0][i],
-                "metadata": results["metadatas"][0][i],
-                "distance": results["distances"][0][i]
-            })
-        
+            distance = results["distances"][0][i]
+            similarity = 1 / (1 + distance)
+            output.append((
+                i,
+                float(similarity),
+                {
+                    "content": results["documents"][0][i],
+                    "metadata": results["metadatas"][0][i]
+                }
+            ))
+
         return output
+
+    def get_stats(self) -> Dict[str, Any]:
+        return {"type": "chroma", "num_documents": self.collection.count()}
+
+
+class PGVectorRetriever:
+    """PostgreSQL + pgvector 检索器 (预留)"""
+
+    def __init__(self, pg_config: Optional[Dict] = None):
+        self.config = pg_config or {}
+        logger.info("PGVector retriever initialized (not fully implemented)")
+
+    def index_documents(self, documents: List[Dict]):
+        logger.info("PGVector indexing not implemented - use Milvus instead")
+
+    def search(self, query: str, top_k: int = 5) -> List[Tuple[int, float, Dict]]:
+        logger.warning("PGVector search not implemented")
+        return []
+
+    def get_stats(self) -> Dict[str, Any]:
+        return {"type": "pgvector", "status": "not_implemented"}
+
+
+class MilvusRetriever:
+    """Milvus 向量数据库检索器"""
+
+    def __init__(self, milvus_config: Optional[Dict] = None):
+        from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType, utility
+
+        self.milvus_config = milvus_config or {}
+        self.embedding_config = config.embedding
+
+        self.host = self.milvus_config.get("host", "localhost")
+        self.port = str(self.milvus_config.get("port", "19530"))
+        self.collection_name = self.milvus_config.get("collection_name", "enterprise_knowledge")
+        self.dimension = self.milvus_config.get("dimension", self.embedding_config.get("dimension", 384))
+        self.index_type = self.milvus_config.get("index_type", "HNSW")
+        self.metric_type = self.milvus_config.get("metric_type", "IP")
+        self.index_params = self.milvus_config.get("index_params", {"M": 16, "efConstruction": 128})
+
+        self.collection: Optional[Collection] = None
+        self._connected = False
+        self._model = None
+
+        logger.info(f"Milvus retriever initialized: {self.host}:{self.port}")
+
+    def _get_embedding_model(self):
+        if self._model is None:
+            model_name = self.embedding_config.get("model", "sentence-transformers/all-MiniLM-L6-v2")
+            device = self.embedding_config.get("device", "cpu")
+            logger.info(f"Loading embedding model: {model_name}")
+            self._model = SentenceTransformer(model_name, device=device)
+        return self._model
+
+    def connect(self) -> None:
+        if self._connected:
+            return
+
+        try:
+            from pymilvus import connections
+            connections.connect(alias="default", host=self.host, port=self.port, timeout=30)
+            self._connected = True
+            logger.info(f"Connected to Milvus at {self.host}:{self.port}")
+        except Exception as e:
+            logger.error(f"Failed to connect to Milvus: {e}")
+            raise
+
+    def disconnect(self) -> None:
+        if self._connected:
+            from pymilvus import connections
+            connections.disconnect("default")
+            self._connected = False
+
+    def encode_texts(self, texts: List[str]) -> np.ndarray:
+        model = self._get_embedding_model()
+        embeddings = model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+        return embeddings.astype(np.float32)
+
+    def encode_single(self, text: str) -> np.ndarray:
+        return self.encode_texts([text])[0]
+
+    def create_collection(self, drop_existing: bool = False):
+        from pymilvus import Collection, CollectionSchema, FieldSchema, DataType, utility
+
+        self.connect()
+
+        if utility.has_collection(self.collection_name):
+            if drop_existing:
+                utility.drop_collection(self.collection_name)
+                logger.info(f"Dropped existing collection: {self.collection_name}")
+            else:
+                self.collection = Collection(self.collection_name)
+                return self.collection
+
+        fields = [
+            FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
+            FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=65535),
+            FieldSchema(name="metadata", dtype=DataType.JSON),
+            FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=self.dimension),
+        ]
+        schema = CollectionSchema(fields=fields, description="Enterprise knowledge base")
+        self.collection = Collection(name=self.collection_name, schema=schema)
+        logger.info(f"Created collection: {self.collection_name}")
+        return self.collection
+
+    def build_index(self) -> None:
+        if self.collection is None:
+            raise ValueError("Collection not created")
+
+        if self.index_type == "HNSW":
+            index_params = {
+                "metric_type": self.metric_type,
+                "index_type": "HNSW",
+                "params": {
+                    "M": self.index_params.get("M", 16),
+                    "efConstruction": self.index_params.get("efConstruction", 128)
+                }
+            }
+        else:
+            index_params = {
+                "metric_type": self.metric_type,
+                "index_type": "FLAT",
+                "params": {}
+            }
+
+        self.collection.create_index(field_name="vector", index_params=index_params)
+        self.collection.load()
+        logger.info(f"Index built: {self.index_type}")
+
+    def index_documents(self, documents: List[Dict], rebuild_index: bool = False) -> None:
+        if not documents:
+            return
+
+        self.create_collection(drop_existing=rebuild_index)
+
+        texts = [doc.get("content", "") for doc in documents]
+        metadatas = [doc.get("metadata", {}) for doc in documents]
+
+        logger.info(f"Encoding {len(documents)} documents...")
+        embeddings = self.encode_texts(texts)
+
+        entities = [texts, metadatas, embeddings.tolist()]
+        self.collection.insert(entities)
+        self.collection.flush()
+
+        if rebuild_index or not self._has_index():
+            self.build_index()
+
+        logger.info(f"Indexed {len(documents)} documents to Milvus")
+
+    def _has_index(self) -> bool:
+        if self.collection is None:
+            return False
+        try:
+            return len(self.collection.indexes) > 0
+        except:
+            return False
+
+    def search(self, query: str, top_k: int = 5) -> List[Tuple[int, float, Dict]]:
+        if self.collection is None:
+            self.create_collection()
+
+        query_vector = self.encode_single(query).reshape(1, -1).tolist()
+
+        if self.index_type == "HNSW":
+            search_params = {"metric_type": self.metric_type, "params": {"ef": 64}}
+        else:
+            search_params = {"metric_type": self.metric_type, "params": {}}
+
+        try:
+            results = self.collection.search(
+                data=query_vector,
+                anns_field="vector",
+                param=search_params,
+                limit=top_k,
+                output_fields=["content", "metadata", "id"]
+            )
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            return []
+
+        output = []
+        for hits in results:
+            for hit in hits:
+                distance = hit.distance
+                similarity = distance if self.metric_type == "IP" else 1 / (1 + distance)
+                output.append((
+                    int(hit.id),
+                    float(similarity),
+                    {
+                        "content": hit.entity.get("content", ""),
+                        "metadata": hit.entity.get("metadata", {})
+                    }
+                ))
+
+        return output
+
+    def get_stats(self) -> Dict[str, Any]:
+        if self.collection is None:
+            return {"status": "not_connected"}
+        try:
+            return {
+                "collection_name": self.collection_name,
+                "dimension": self.dimension,
+                "index_type": self.index_type,
+                "num_entities": self.collection.num_entities,
+                "status": "connected"
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.disconnect()
