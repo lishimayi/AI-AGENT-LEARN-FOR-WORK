@@ -5,14 +5,15 @@ from datetime import datetime
 
 # ==================== 请求模型 ====================
 
-class OrderRequest(BaseModel):
-    """用户下单请求 - 自然语言"""
-    natural_language: str = Field(..., description="自然语言下单指令")
-    
-    class Config:
-        json_schema_extra = {
-            "example": "帮我买100美元的BTC，价格跌到50000以下再买"
-        }
+class AgentRequest(BaseModel):
+    """Agent 对话请求"""
+    message: str = Field(..., description="用户消息")
+    session_id: Optional[str] = Field(default=None, description="会话ID")
+    # 用于在参数补全后，把用户填好的字段一起提交给后端
+    filled_fields: Optional[dict] = Field(
+        default=None,
+        description="用户在前端表单中补全的参数，例如 {symbol: BTCUSDT, amount: 100}"
+    )
 
 
 # ==================== LLM 解析结果 ====================
@@ -45,12 +46,21 @@ class ParsedOrder(BaseModel):
 
 # ==================== 响应模型 ====================
 
-class OrderResponse(BaseModel):
-    """订单执行结果"""
-    success: bool = Field(..., description="是否执行成功")
-    message: str = Field(..., description="结果消息")
-    order_id: Optional[str] = Field(default=None, description="交易所订单ID")
-    parsed_order: Optional[ParsedOrder] = Field(default=None, description="解析后的订单信息")
+class AgentResponse(BaseModel):
+    """Agent 响应"""
+    success: bool = Field(..., description="是否成功")
+    message: str = Field(..., description="Agent 最终回复内容")
+    session_id: Optional[str] = Field(default=None, description="会话ID")
+    # 下单意图相关字段
+    needs_input: bool = Field(default=False, description="是否需要用户补充参数")
+    missing_fields: list = Field(
+        default_factory=list,
+        description="缺失的字段名列表，例如 ['symbol', 'amount']"
+    )
+    parsed_intent: Optional[dict] = Field(
+        default=None,
+        description="已解析出的下单意图（部分字段可能为 None）"
+    )
     timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
 
 

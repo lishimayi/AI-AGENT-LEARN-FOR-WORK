@@ -1,90 +1,49 @@
 /**
  * API 调用模块
  * 与后端 FastAPI 服务通信
+ *
+ * 设计原则：前端只负责"对话入口"，所有业务决策（解析、下单、查余额）
+ * 都交给后端 Agent。后端会通过意图识别 + ReAct 工具链自动处理。
  */
 
 const API_BASE = 'http://localhost:8000'
 
-export interface ParsedOrder {
-  action: 'buy' | 'sell'
-  symbol: string
-  amount: number
-  amount_type: 'base' | 'quote'
-  order_type: 'market' | 'limit'
-  price: number | null
-  stop_price: number | null
-  reasoning: string
-}
-
-export interface OrderResponse {
+export interface AgentResponse {
   success: boolean
   message: string
-  order_id: string | null
-  parsed_order: ParsedOrder | null
-}
-
-export interface ParseResponse {
-  success: boolean
-  parsed_order: ParsedOrder
+  session_id?: string | null
+  needs_input?: boolean
+  missing_fields?: string[]
+  parsed_intent?: Record<string, unknown> | null
 }
 
 /**
- * 仅解析订单（不执行）- 用于预览
+ * 与 Agent 对话
+ * 后端会决定是否需要补全参数、是否下单、是否查余额等。
  */
-export async function parseOrder(naturalLanguage: string): Promise<ParseResponse> {
-  const response = await fetch(`${API_BASE}/api/parse`, {
+export async function agentChat(
+  message: string,
+  filledFields?: Record<string, unknown>,
+): Promise<AgentResponse> {
+  const response = await fetch(`${API_BASE}/api/agent/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ natural_language: naturalLanguage }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message,
+      filled_fields: filledFields,
+    }),
   })
 
   if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '解析失败')
+    throw new Error(`Agent 请求失败 (${response.status})`)
   }
 
   return response.json()
 }
 
 /**
- * 执行订单（解析 + 下单）
+ * 重置 Agent 对话历史
  */
-export async function placeOrder(naturalLanguage: string): Promise<OrderResponse> {
-  const response = await fetch(`${API_BASE}/api/order`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ natural_language: naturalLanguage }),
-  })
-
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '下单失败')
-  }
-
-  return response.json()
-}
-
-/**
- * 查询余额
- */
-export async function getBalance(asset: string = 'USDT'): Promise<{ success: boolean; asset: string; free: number }> {
-  const response = await fetch(`${API_BASE}/api/balance?asset=${asset}`)
-
-  if (!response.ok) {
-    throw new Error('查询余额失败')
-  }
-
-  return response.json()
-}
-
-/**
- * 健康检查
- */
-export async function healthCheck(): Promise<{ status: string; llm_provider: string; exchange: string }> {
-  const response = await fetch(`${API_BASE}/health`)
-  return response.json()
+export async function agentReset(): Promise<void> {
+  await fetch(`${API_BASE}/api/agent/reset`, { method: 'POST' })
 }

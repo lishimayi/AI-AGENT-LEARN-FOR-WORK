@@ -1,11 +1,16 @@
 import logging
-from typing import Optional, Dict, Any
+import uuid
+from typing import Optional, Dict, Any, List
 from binance.client import Client as BinanceClient
 from binance.exceptions import BinanceAPIException
 from config import settings
 from backend.schemas import ParsedOrder, ExchangeOrder
 
 logger = logging.getLogger(__name__)
+
+
+class SafetyGuardError(Exception):
+    """生产网络护栏拦截异常"""
 
 
 class TradingExecutor:
@@ -31,6 +36,45 @@ class TradingExecutor:
                     api_secret=settings.BINANCE_SECRET_KEY
                 )
         return self._client
+
+    # ==================== 生产网络安全护栏 ====================
+
+    def _is_production(self) -> bool:
+        return self.exchange == "binance" and not settings.BINANCE_TESTNET
+
+    def _allowed_symbols(self) -> List[str]:
+        return [s.strip().upper() for s in settings.PRODUCTION_ALLOWED_SYMBOLS.split(",") if s.strip()]
+
+    def enforce_production_guard(self, parsed: ParsedOrder) -> None:
+        """
+        生产网络硬性限制：
+          1) 交易对必须在白名单内
+          2) 单笔 quote 金额 ≤ PRODUCTION_MAX_QUOTE_USDT
+          3) 单笔 base 数量 ≤ PRODUCTION_MAX_BASE_QTY
+        测试网或 DRY_RUN 时直接放行。
+        """
+        if not self._is_production() or settings.DRY_RUN:
+            return
+
+        symbol = (parsed.symbol or "").upper()
+        if symbol not in self._allowed_symbols():
+            raise SafetyGuardError(
+                f"交易对 {symbol} 不在白名单 {self._allowed_symbols()} 内，已拦截"
+            )
+
+        if parsed.amount_type == "quote" and parsed.amount > settings.PRODUCTION_MAX_QUOTE_USDT:
+            raise SafetyGuardError(
+                f"单笔金额 {parsed.amount} USDT 超过上限 {settings.PRODUCTION_MAX_QUOTE_USDT}"
+            )
+        if parsed.amount_type == "base" and parsed.amount > settings.PRODUCTION_MAX_BASE_QTY:
+            raise SafetyGuardError(
+                f"单笔数量 {parsed.amount} 超过上限 {settings.PRODUCTION_MAX_BASE_QTY}"
+            )
+
+        logger.warning(
+            f"[PROD GUARD] action={parsed.action} symbol={symbol} "
+            f"amount={parsed.amount} {parsed.amount_type}"
+        )
 
     def convert_order(self, parsed: ParsedOrder) -> ExchangeOrder:
         """将ParsedOrder转换为交易所订单格式"""
@@ -75,7 +119,32 @@ class TradingExecutor:
     async def place_order(self, parsed: ParsedOrder) -> Dict[str, Any]:
         """执行下单"""
         exchange_order = self.convert_order(parsed)
-        
+
+        # 生产网络：先过安全护栏
+        try:
+            self.enforce_production_guard(parsed)
+        except SafetyGuardError as e:
+            return {
+                "success": False,
+                "message": f"[PROD GUARD] {e}",
+                "order_id": None,
+            }
+
+        # DRY_RUN：不调交易所，只返回模拟订单
+        if settings.DRY_RUN:
+            mock_id = f"DRY-{uuid.uuid4().hex[:10].upper()}"
+            logger.info(f"[DRY-RUN] mock order: {exchange_order}")
+            return {
+                "success": True,
+                "message": "DRY-RUN：未真实下单，已模拟成功",
+                "order_id": mock_id,
+                "symbol": exchange_order.symbol,
+                "side": exchange_order.side,
+                "type": exchange_order.order_type,
+                "status": "DRY_FILLED",
+                "dry_run": True,
+            }
+
         try:
             if self.exchange == "binance":
                 return await self._place_binance_order(exchange_order)
@@ -127,64 +196,6 @@ class TradingExecutor:
             "type": result["type"],
             "status": result["status"],
         }
-
-    async def get_balance(self, asset: str = "USDT") -> float:
-        """获取账户余额（现货）"""
-        if self.exchange == "binance":
-            # 获取账户信息
-            account = self.client.get_account()
-            for balance in account["balances"]:
-                if balance["asset"] == asset:
-                    return float(balance["free"])
-            return 0.0
-        return 0.0
-
-    async def get_all_balances(self) -> Dict[str, Dict[str, float]]:
-        """获取现货和合约账户余额"""
-        result = {"spot": {}, "futures": {}}
-        
-        if self.exchange == "binance":
-            # 测试网模式：API Key 权限不足，返回提示
-            if settings.BINANCE_TESTNET:
-                logger.warning("测试网模式：余额查询可能失败，请检查API权限")
-            
-            # 现货账户
-            try:
-                account = self.client.get_account()
-                for balance in account["balances"]:
-                    free = float(balance["free"])
-                    locked = float(balance["locked"])
-                    if free > 0 or locked > 0:
-                        result["spot"][balance["asset"]] = {
-                            "free": free,
-                            "locked": locked
-                        }
-            except Exception as e:
-                logger.warning(f"获取现货余额失败: {e}")
-            
-            # 合约账户
-            try:
-                # 测试网使用单独的合约端点
-                from binance.client import Client
-                futures_client = Client(
-                    api_key=settings.BINANCE_API_KEY,
-                    api_secret=settings.BINANCE_SECRET_KEY,
-                    testnet=True,
-                    futures=True  # 合约专用
-                )
-                futures_balance = futures_client.futures_account_balance()
-                for b in futures_balance:
-                    available = float(b.get("availableBalance", 0))
-                    wallet = float(b.get("walletBalance", 0))
-                    if available > 0 or wallet > 0:
-                        result["futures"][b["asset"]] = {
-                            "free": available,
-                            "wallet": wallet
-                        }
-            except Exception as e:
-                logger.warning(f"获取合约余额失败: {e}")
-        
-        return result
 
 
 # 全局实例

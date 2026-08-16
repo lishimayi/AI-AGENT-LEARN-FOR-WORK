@@ -1,12 +1,11 @@
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from config import settings
-from backend.schemas import OrderRequest, OrderResponse, HealthResponse
-from backend.llm.router import llm_router
-from backend.trading.executor import trading_executor
+from backend.schemas import AgentRequest, AgentResponse, HealthResponse
+from backend.agent.agent import trading_agent
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -56,97 +55,50 @@ async def health_check():
     )
 
 
-@app.post("/api/parse", tags=["Order"])
-async def parse_order_only(request: OrderRequest):
+# ==================== Agent 端点 ====================
+
+@app.post("/api/agent/chat", response_model=AgentResponse, tags=["Agent"])
+async def agent_chat(request: AgentRequest):
     """
-    仅解析订单 - 不执行交易
-    用于测试LLM解析效果
+    Agent 对话接口
+    接收用户消息，返回 Agent 的最终回复
+
+    当用户意图是下单但参数缺失时：
+    - needs_input=True
+    - missing_fields: 缺失字段列表
+    - parsed_intent: 已识别出的下单意图
     """
     try:
-        parsed = await llm_router.parse_order(request.natural_language)
-        return {
-            "success": True,
-            "parsed_order": parsed.model_dump()
-        }
-    except Exception as e:
-        logger.error(f"解析失败: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.post("/api/order", response_model=OrderResponse, tags=["Order"])
-async def place_order(request: OrderRequest):
-    """
-    自然语言下单
-    
-    完整流程：
-    1. LLM解析自然语言 → 结构化订单
-    2. 交易执行器执行订单
-    3. 返回结果
-    """
-    try:
-        logger.info(f"收到订单请求: {request.natural_language}")
-        
-        # Step 1: LLM解析
-        parsed = await llm_router.parse_order(request.natural_language)
-        logger.info(f"解析结果: action={parsed.action}, symbol={parsed.symbol}, amount={parsed.amount}")
-        
-        # Step 2: 执行交易
-        result = await trading_executor.place_order(parsed)
-        
-        # Step 3: 返回结果
-        return OrderResponse(
+        logger.info(f"收到 Agent 消息: {request.message}")
+        result = await trading_agent.run(
+            request.message,
+            filled_fields=request.filled_fields,
+        )
+        return AgentResponse(
             success=result["success"],
             message=result["message"],
-            order_id=result.get("order_id"),
-            parsed_order=parsed
+            session_id=request.session_id,
+            needs_input=result.get("needs_input", False),
+            missing_fields=result.get("missing_fields", []),
+            parsed_intent=result.get("parsed_intent"),
         )
-        
     except Exception as e:
-        logger.error(f"下单失败: {e}")
-        return OrderResponse(
+        logger.error(f"Agent 执行错误: {e}")
+        return AgentResponse(
             success=False,
-            message=f"下单失败: {str(e)}",
-            order_id=None,
-            parsed_order=None
+            message=f"Agent 执行失败: {str(e)}",
+            session_id=request.session_id,
+            needs_input=False,
+            missing_fields=[],
+            parsed_intent=None,
         )
 
 
-@app.get("/api/balance", tags=["Account"])
-async def get_balance(asset: str = "USDT"):
-    """查询账户余额"""
-    try:
-        balance = await trading_executor.get_balance(asset)
-        return {
-            "success": True,
-            "asset": asset,
-            "free": balance
-        }
-    except Exception as e:
-        logger.error(f"查询余额失败: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.get("/api/balances", tags=["Account"])
-async def get_all_balances():
-    """查询现货和合约账户余额"""
-    try:
-        balances = await trading_executor.get_all_balances()
-        return {
-            "success": True,
-            "spot": balances["spot"],
-            "futures": balances["futures"],
-            "is_testnet": settings.BINANCE_TESTNET
-        }
-    except Exception as e:
-        logger.error(f"查询余额失败: {e}")
-        # 测试网可能没有权限，返回空余额
-        return {
-            "success": True,
-            "spot": {},
-            "futures": {},
-            "is_testnet": settings.BINANCE_TESTNET,
-            "warning": "测试网模式下无法获取余额，请确认API权限"
-        }
+@app.post("/api/agent/reset", tags=["Agent"])
+async def agent_reset():
+    """重置 Agent 对话历史"""
+    trading_agent.reset_history()
+    return {"success": True, "message": "对话历史已重置"}
 
 
 if __name__ == "__main__":
