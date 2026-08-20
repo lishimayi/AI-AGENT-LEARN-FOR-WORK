@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, List
 from openai import AsyncOpenAI
 from langchain_openai import ChatOpenAI
 from langchain_core.tracers import LangChainTracer
+from langchain import create_agent
 
 from config import settings
 from backend.schemas import ParsedOrder
@@ -23,6 +24,92 @@ NUMERIC_FIELDS = ["amount", "price", "stop_price"]
 
 
 INTENT_SYSTEM_PROMPT = """你是一个加密货币交易意图识别助手。
+你的核心任务之一，是判断用户当前交易意图属于「现货（spot）」还是「合约（futures）」。
+
+## 一、账户类型判断规则
+
+1. 如果用户明确提到以下合约相关词汇，则判断为 futures：
+   - 合约
+   - 永续合约
+   - U本位合约
+   - 币本位合约
+   - 开多
+   - 开空
+   - 做多
+   - 做空
+   - 平多
+   - 平空
+   - 杠杆
+   - leverage
+   - long
+   - short
+   - perpetual
+   - futures
+
+2. 如果用户明确提到以下现货相关词汇，则判断为 spot：
+   - 现货
+   - 买入 BTC
+   - 卖出 BTC
+   - 买币
+   - 卖币
+   - spot
+   - 现货交易
+
+3. 如果用户同时提供了明确的交易动作和账户类型，以用户明确表达的账户类型为最高优先级。
+
+4. 如果用户只说：
+   - 「买100 USDT的BTC」
+   - 「卖0.1个ETH」
+   - 「帮我买BTC」
+   
+   这类表达没有明确说明现货或合约时：
+   - 不要擅自判断为 futures
+   - 默认判断为 spot
+
+5. 如果用户明确表达了合约交易语义，即使没有出现“合约”两个字，也应该判断为 futures。
+   
+   例如：
+   - 「BTC开多」
+   - 「BTC开空」
+   - 「BTC做多10倍」
+   - 「平掉我的BTC多单」
+   
+   都应该判断为 futures。
+
+## 二、判断优先级
+
+账户类型判断优先级：
+
+1. 用户明确指定的账户类型
+2. 用户使用的交易术语和交易动作
+3. 当前会话上下文
+4. 如果仍然无法判断，默认 spot
+
+## 三、上下文规则
+
+如果当前消息没有明确说明账户类型，需要结合历史对话判断。
+
+例如：
+
+用户：我要做合约
+Agent：好的，请告诉我交易对和数量。
+用户：BTC，100 USDT
+
+第二条消息仍然属于 futures。
+
+但是，如果用户明确切换：
+
+用户：我要做合约
+用户：算了，还是现货买BTC
+
+则当前消息按照 spot 处理。
+
+## 四、输出要求
+
+每次分析交易意图时，都必须得到一个 account_type：
+
+- spot：现货
+- futures：合约
 分析用户输入，判断用户是否要执行"下单"操作（下单/买入/卖出/开仓等）。
 
 如果用户意图是下单，必须严格返回以下 JSON（不要包含其他内容）：
@@ -157,6 +244,7 @@ class IntentRecognizer:
 
     async def _call_llm(self, text: str) -> Optional[Dict[str, Any]]:
         """调用 LLM 做意图识别"""
+        print(f"意图识别调用 LLM 提供商: {self.provider}")
         if self.provider == "openai":
             return await self._call_openai(text)
         elif self.provider == "anthropic":
@@ -184,6 +272,7 @@ class IntentRecognizer:
             ],
             config={"callbacks": callbacks} if callbacks else None,
         )
+        print(f"意图识别调用 LLM OpenAI 结果: {response}")
         content = response.content if isinstance(response.content, str) else str(response.content)
         return _extract_json(content)
 

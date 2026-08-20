@@ -1,5 +1,22 @@
 <template>
   <div class="agent-chat">
+    <!-- 顶部：账户类型开关 -->
+    <div class="account-type-bar">
+      <span class="account-label">账户类型</span>
+      <div class="toggle-group">
+        <button
+          v-for="opt in accountTypeOptions"
+          :key="opt.value"
+          type="button"
+          :class="['toggle-btn', accountType === opt.value ? 'toggle-active' : '']"
+          :disabled="loading"
+          @click="handleSwitchAccountType(opt.value)"
+        >
+          {{ opt.label }}
+        </button>
+      </div>
+    </div>
+
     <!-- 对话历史 -->
     <div ref="messagesContainer" class="messages-container">
       <div
@@ -14,6 +31,19 @@
         <div class="message-content">
           <div class="message-header">
             <span class="sender">{{ msg.role === 'user' ? '你' : 'Agent' }}</span>
+            <!-- 账户类型标签（仅 assistant 消息展示；user 消息直接显示开关当前值） -->
+            <span
+              v-if="msg.role === 'user'"
+              :class="['account-tag', msg.accountType === 'futures' ? 'tag-futures' : 'tag-spot']"
+            >
+              {{ msg.accountTypeZh || ACCOUNT_TYPE_LABEL[accountType] }}
+            </span>
+            <span
+              v-else-if="msg.accountTypeZh"
+              :class="['account-tag', msg.accountType === 'futures' ? 'tag-futures' : 'tag-spot']"
+            >
+              {{ msg.accountTypeZh }}
+            </span>
             <span class="time">{{ formatTime(msg.timestamp) }}</span>
           </div>
 
@@ -25,7 +55,7 @@
           ></div>
 
           <!-- 参数补全表单 -->
-          <div v-else class="order-form">
+          <div v-else-if="msg.needsInput" class="order-form">
             <div class="message-body" v-html="formatContent(msg.content)"></div>
 
             <div class="form-grid">
@@ -129,6 +159,84 @@
               </button>
             </div>
           </div>
+
+          <!-- 订单预览卡片 -->
+          <div v-else-if="msg.orderPreview" class="order-preview">
+            <div class="preview-header">
+              <span class="preview-title">📋 订单预览</span>
+              <span class="preview-id-area">
+                <span
+                  v-if="msg.orderPreview.account_type_zh"
+                  :class="['account-tag', msg.orderPreview.account_type === 'futures' ? 'tag-futures' : 'tag-spot']"
+                >
+                  {{ msg.orderPreview.account_type_zh }}
+                </span>
+                <span class="preview-id">ID: {{ msg.previewId }}</span>
+              </span>
+            </div>
+
+            <div class="preview-grid">
+              <div class="preview-row">
+                <span class="preview-label">操作</span>
+                <span
+                  :class="[
+                    'preview-value',
+                    'action-tag',
+                    msg.orderPreview.action_zh === '买入' ? 'action-buy' : 'action-sell'
+                  ]"
+                >
+                  {{ msg.orderPreview.action_zh }}
+                </span>
+              </div>
+              <div class="preview-row">
+                <span class="preview-label">交易对</span>
+                <span class="preview-value">{{ msg.orderPreview.symbol }}</span>
+              </div>
+              <div class="preview-row">
+                <span class="preview-label">金额</span>
+                <span class="preview-value amount-value">
+                  {{ msg.orderPreview.amount_display }}
+                </span>
+              </div>
+              <div class="preview-row">
+                <span class="preview-label">类型</span>
+                <span class="preview-value">{{ msg.orderPreview.order_type_zh }}</span>
+              </div>
+              <div v-if="msg.orderPreview.price" class="preview-row">
+                <span class="preview-label">限价</span>
+                <span class="preview-value">{{ msg.orderPreview.price }} USDT</span>
+              </div>
+              <div v-if="msg.orderPreview.stop_price" class="preview-row">
+                <span class="preview-label">触发价</span>
+                <span class="preview-value">{{ msg.orderPreview.stop_price }} USDT</span>
+              </div>
+            </div>
+
+            <div v-if="msg.previewStatus === 'pending'" class="preview-actions">
+              <button
+                type="button"
+                class="cancel-btn"
+                :disabled="loading"
+                @click="handleCancelPreview(index)"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                class="submit-btn"
+                :disabled="loading"
+                @click="handleConfirmOrder(index)"
+              >
+                {{ loading ? '处理中...' : '确认下单' }}
+              </button>
+            </div>
+            <div v-else-if="msg.previewStatus === 'cancelled'" class="preview-status cancelled">
+              已取消
+            </div>
+            <div v-else-if="msg.previewStatus === 'confirmed'" class="preview-status confirmed">
+              已提交
+            </div>
+          </div>
         </div>
       </div>
 
@@ -158,7 +266,7 @@
         placeholder="输入你的问题或下单指令，如：帮我买100美元的BTC"
         @keydown.enter.exact.prevent="handleSend"
         :disabled="loading"
-        rows="2"
+        rows="1"
       ></textarea>
       <button @click="handleSend" :disabled="loading || !inputText.trim()" class="send-btn">
         <span v-if="loading">处理中...</span>
@@ -172,8 +280,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, reactive, computed } from 'vue'
-import { agentChat, agentReset } from '../api'
+import { ref, nextTick, reactive, computed, onMounted } from 'vue'
+import {
+  agentChat,
+  agentReset,
+  agentConfirm,
+  getAccountType,
+  switchAccountType,
+  ACCOUNT_TYPE_LABEL,
+  type OrderPreview,
+  type AccountType,
+} from '../api'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -183,6 +300,14 @@ interface Message {
   rawText?: string
   missingFields?: string[]
   parsedIntent?: Record<string, any> | null
+  /** 预览订单：requires_confirmation=true 时显示卡片 */
+  previewId?: string
+  orderPreview?: OrderPreview | null
+  /** 用户已经处理过的预览（已确认/已取消），用于锁定按钮 */
+  previewStatus?: 'pending' | 'confirmed' | 'cancelled'
+  /** 当前消息使用的账户类型（仅 assistant 真实值；user 写当前开关值） */
+  accountType?: AccountType
+  accountTypeZh?: string
 }
 
 interface IntentForm {
@@ -196,6 +321,42 @@ const messages = ref<Message[]>([])
 const inputText = ref('')
 const loading = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
+const accountType = ref<AccountType>('spot')
+
+const accountTypeOptions: { value: AccountType; label: string }[] = [
+  { value: 'spot', label: ACCOUNT_TYPE_LABEL.spot },
+  { value: 'futures', label: ACCOUNT_TYPE_LABEL.futures },
+]
+
+// 初始化：从后端拉一次账户类型
+onMounted(async () => {
+  try {
+    const info = await getAccountType()
+    accountType.value = info.account_type
+  } catch (e) {
+    // 默认 spot，不阻塞 UI
+    console.warn('获取账户类型失败，使用默认 spot:', e)
+  }
+})
+
+async function handleSwitchAccountType(next: AccountType) {
+  if (accountType.value === next || loading.value) return
+  loading.value = true
+  try {
+    const res = await switchAccountType(next)
+    accountType.value = res.account_type
+  } catch (e) {
+    messages.value.push({
+      role: 'assistant',
+      content:
+        '切换账户类型失败: ' +
+        (e instanceof Error ? e.message : '未知错误'),
+      timestamp: new Date(),
+    })
+  } finally {
+    loading.value = false
+  }
+}
 
 const actionOptions = [
   { value: 'buy', label: '买入' },
@@ -259,17 +420,23 @@ async function callAgent(
   message: string,
   filledFields?: Record<string, any>,
 ) {
-  return agentChat(message, filledFields)
+  return agentChat(message, filledFields, accountType.value)
 }
 
 async function handleSend() {
   const text = inputText.value.trim()
   if (!text || loading.value) return
 
+  // 记录 user 消息时同步记下当前账户类型（用户当时在哪个账户下发的指令）
+  const msgAccountType = accountType.value
+  const msgAccountTypeZh = ACCOUNT_TYPE_LABEL[msgAccountType]
+
   messages.value.push({
     role: 'user',
     content: text,
     timestamp: new Date(),
+    accountType: msgAccountType,
+    accountTypeZh: msgAccountTypeZh,
   })
   inputText.value = ''
   loading.value = true
@@ -284,6 +451,8 @@ async function handleSend() {
       role: 'assistant',
       content: '请求失败: ' + (error instanceof Error ? error.message : '未知错误'),
       timestamp: new Date(),
+      accountType: msgAccountType,
+      accountTypeZh: msgAccountTypeZh,
     })
   } finally {
     loading.value = false
@@ -293,37 +462,68 @@ async function handleSend() {
 }
 
 function handleAgentResponse(data: AgentResponse, userText: string) {
+  const responseAccountType = data.account_type || accountType.value
+  const responseAccountTypeZh =
+    data.account_type_zh || ACCOUNT_TYPE_LABEL[responseAccountType]
+
+  const pushAssistant = (overrides: Partial<Message> = {}): Message => ({
+    role: 'assistant',
+    content: '',
+    timestamp: new Date(),
+    accountType: responseAccountType,
+    accountTypeZh: responseAccountTypeZh,
+    ...overrides,
+  })
+
   if (!data.success) {
-    messages.value.push({
-      role: 'assistant',
-      content: `错误: ${data.message}`,
-      timestamp: new Date(),
-    })
+    messages.value.push(
+      pushAssistant({ content: `错误: ${data.message}` }),
+    )
     return
   }
 
-  if (data.needs_input) {
+  // 业务错误码 10101：quoteOrderQty 缺失 → 自动转 needs_input 渲染表单
+  const requiresForm = data.needs_input || data.error_code === 10101
+
+  if (requiresForm) {
     currentMissing = data.missing_fields || []
     resetForm(data.parsed_intent)
 
-    messages.value.push({
-      role: 'assistant',
-      content: data.message,
-      timestamp: new Date(),
-      needsInput: true,
-      rawText: userText,
-      missingFields: data.missing_fields || [],
-      parsedIntent: data.parsed_intent || null,
-    })
+    const prompt =
+      data.error_code === 10101
+        ? `需要您补充买入金额才能下单（错误码 10101：quoteOrderQty 缺失）\n\n${data.message}`
+        : data.message
+
+    messages.value.push(
+      pushAssistant({
+        content: prompt,
+        needsInput: true,
+        rawText: userText,
+        missingFields: data.missing_fields || [],
+        parsedIntent: data.parsed_intent || null,
+      }),
+    )
+    return
+  }
+
+  // 预览订单：参数齐全 → 后端不直接下单，先返回预览让用户确认
+  if (data.requires_confirmation && data.preview_id && data.order_preview) {
+    applyIntent(data.parsed_intent)
+    messages.value.push(
+      pushAssistant({
+        content: data.message,
+        previewId: data.preview_id,
+        orderPreview: data.order_preview,
+        parsedIntent: data.parsed_intent || null,
+        rawText: userText,
+        previewStatus: 'pending',
+      }),
+    )
     return
   }
 
   applyIntent(null)
-  messages.value.push({
-    role: 'assistant',
-    content: data.message,
-    timestamp: new Date(),
-  })
+  messages.value.push(pushAssistant({ content: data.message }))
 }
 
 async function handleSubmitForm(originalText: string) {
@@ -380,6 +580,71 @@ function handleCancelForm(index: number) {
   scrollToBottom()
 }
 
+// ==================== 预览订单：确认 / 取消 / 补充文案 ====================
+
+async function handleConfirmOrder(messageIndex: number) {
+  const msg = messages.value[messageIndex]
+  if (!msg || !msg.previewId || !msg.parsedIntent) return
+  if (loading.value) return
+
+  loading.value = true
+  await nextTick()
+  scrollToBottom()
+
+  try {
+    const data = await agentConfirm(
+      msg.rawText || '',
+      msg.previewId,
+      msg.parsedIntent,
+      accountType.value,
+    )
+
+    // 标记预览状态为 confirmed
+    msg.previewStatus = 'confirmed'
+
+    const accType = data.account_type || accountType.value
+    const accZh = data.account_type_zh || ACCOUNT_TYPE_LABEL[accType]
+
+    // 把确认结果作为新消息追加
+    messages.value.push({
+      role: 'assistant',
+      content: data.success ? data.message : `错误: ${data.message}`,
+      timestamp: new Date(),
+      accountType: accType,
+      accountTypeZh: accZh,
+    })
+  } catch (error) {
+    messages.value.push({
+      role: 'assistant',
+      content:
+        '确认下单请求失败: ' +
+        (error instanceof Error ? error.message : '未知错误'),
+      timestamp: new Date(),
+      accountType: accountType.value,
+      accountTypeZh: ACCOUNT_TYPE_LABEL[accountType.value],
+    })
+  } finally {
+    loading.value = false
+    await nextTick()
+    scrollToBottom()
+  }
+}
+
+function handleCancelPreview(messageIndex: number) {
+  const msg = messages.value[messageIndex]
+  if (!msg) return
+  msg.previewStatus = 'cancelled'
+  messages.value.push({
+    role: 'assistant',
+    content:
+      '已取消这次下单预览。如果你有补充说明（比如想改成限价单、改金额），请直接在下方输入框里告诉我。',
+    timestamp: new Date(),
+    accountType: msg.accountType,
+    accountTypeZh: msg.accountTypeZh,
+  })
+  scrollToBottom()
+}
+
 function formatFilledSummary(filled: Record<string, any>): string {
   const parts: string[] = []
   if (filled.action === 'buy') parts.push('买入')
@@ -414,6 +679,81 @@ function scrollToBottom() {
   background: #f5f5f5;
   border-radius: 12px;
   overflow: hidden;
+}
+
+/* ==================== 顶部账户类型开关 ==================== */
+
+.account-type-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.account-label {
+  font-size: 13px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.toggle-group {
+  display: inline-flex;
+  background: #f3f4f6;
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.toggle-btn {
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: #6b7280;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.toggle-btn:hover:not(:disabled) {
+  color: #111827;
+}
+
+.toggle-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.toggle-btn.toggle-active {
+  background: #ffffff;
+  color: #111827;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* ==================== 账户类型标签（消息头部）==================== */
+
+.account-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 11px;
+  border-radius: 10px;
+  margin-left: 6px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.tag-spot {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.tag-futures {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fcd34d;
 }
 
 .messages-container {
@@ -514,19 +854,24 @@ function scrollToBottom() {
 
 .input-area {
   display: flex;
-  gap: 12px;
-  padding: 16px;
+  gap: 8px;
+  padding: 10px 12px;
   background: white;
   border-top: 1px solid #e0e0e0;
 }
 
 .input-area textarea {
   flex: 1;
-  padding: 12px 16px;
+  padding: 8px 14px;
   border: 1px solid #ddd;
-  border-radius: 24px;
+  border-radius: 20px;
   resize: none;
   font-size: 14px;
+  line-height: 20px;
+  min-height: 0;
+  height: 36px;
+  max-height: 36px;
+  overflow-y: auto;
   outline: none;
   transition: border-color 0.2s;
 }
@@ -536,13 +881,19 @@ function scrollToBottom() {
 }
 
 .send-btn {
-  padding: 10px 24px;
+  height: 36px;
+  padding: 0 20px;
   background: #2196f3;
   color: white;
   border: none;
-  border-radius: 24px;
+  border-radius: 20px;
   cursor: pointer;
   font-weight: 500;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: background 0.2s;
 }
 
@@ -556,13 +907,18 @@ function scrollToBottom() {
 }
 
 .reset-btn {
-  padding: 10px 16px;
+  height: 36px;
+  padding: 0 14px;
   background: #f5f5f5;
   color: #666;
   border: 1px solid #ddd;
-  border-radius: 24px;
+  border-radius: 20px;
   cursor: pointer;
   font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: background 0.2s;
 }
 
@@ -716,5 +1072,106 @@ code {
 .cancel-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ==================== 订单预览卡片 ==================== */
+
+.order-preview {
+  margin-top: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fafbfc;
+  overflow: hidden;
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #f0f4f8;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.preview-title {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.preview-id {
+  font-size: 12px;
+  color: #95a5a6;
+  font-family: 'Courier New', monospace;
+}
+
+.preview-grid {
+  padding: 12px 14px;
+}
+
+.preview-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed #ecf0f1;
+}
+
+.preview-row:last-child {
+  border-bottom: none;
+}
+
+.preview-label {
+  color: #7f8c8d;
+  font-size: 14px;
+}
+
+.preview-value {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.amount-value {
+  color: #e67e22;
+  font-size: 15px;
+}
+
+.action-tag {
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  color: white;
+}
+
+.action-buy {
+  background: #27ae60;
+}
+
+.action-sell {
+  background: #e74c3c;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  background: #f8f9fa;
+  border-top: 1px solid #e0e0e0;
+}
+
+.preview-status {
+  text-align: center;
+  padding: 8px 14px;
+  font-size: 13px;
+  background: #f8f9fa;
+  border-top: 1px solid #e0e0e0;
+}
+
+.preview-status.cancelled {
+  color: #95a5a6;
+}
+
+.preview-status.confirmed {
+  color: #27ae60;
 }
 </style>

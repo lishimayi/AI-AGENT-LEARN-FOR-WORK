@@ -95,7 +95,8 @@ class TradingExecutor:
             quantity=None,
             quote_order_qty=None,
             price=None,
-            stop_price=None
+            stop_price=None,
+            account_type=getattr(parsed, "account_type", "spot") or "spot",
         )
 
         # 设置数量
@@ -184,9 +185,13 @@ class TradingExecutor:
         if order.stop_price:
             params["stopPrice"] = order.stop_price
 
-        # python-binance 新版本方法名
-        result = self.client.create_order(**params)
-        
+        # 合约账户走 futures_create_order
+        if getattr(order, "account_type", "spot") == "futures":
+            result = self.client.futures_create_order(**params)
+        else:
+            # python-binance 新版本方法名
+            result = self.client.create_order(**params)
+
         return {
             "success": True,
             "message": "订单提交成功",
@@ -195,6 +200,41 @@ class TradingExecutor:
             "side": result["side"],
             "type": result["type"],
             "status": result["status"],
+        }
+
+    def probe_account_type(self) -> Dict[str, Any]:
+        """
+        探测后端支持的账户类型：
+        - spot：现货（默认）
+        - futures：合约（USDⓈ-M 永续）
+
+        通过测试网/DRY_RUN 时也允许调用，期货端点失败不影响现货判定。
+        """
+        spot_ok = True
+        futures_ok = False
+        spot_err = None
+        futures_err = None
+
+        try:
+            self.client.get_account()
+        except Exception as e:
+            spot_ok = False
+            spot_err = str(e)
+
+        try:
+            self.client.futures_account()
+            futures_ok = True
+        except Exception as e:
+            futures_ok = False
+            futures_err = str(e)
+
+        # 至少要有一个可用
+        default = "spot" if spot_ok else ("futures" if futures_ok else "spot")
+        return {
+            "spot_available": spot_ok,
+            "futures_available": futures_ok,
+            "default": default,
+            "errors": {"spot": spot_err, "futures": futures_err},
         }
 
 

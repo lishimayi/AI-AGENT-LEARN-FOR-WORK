@@ -14,7 +14,7 @@ import AgentChat from './components/AgentChat.vue'
 
     <!-- 主内容 -->
     <main class="max-w-2xl mx-auto px-4 py-6">
-      <div class="bg-white rounded-lg shadow-sm overflow-hidden" style="height: 640px;">
+      <div class="bg-white rounded-lg shadow-sm overflow-hidden" style="height: 70vh;">
         <AgentChat />
       </div>
 
@@ -31,11 +31,5 @@ import AgentChat from './components/AgentChat.vue'
       </div>
     </main>
 
-    <!-- 底部 -->
-    <footer class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 py-3">
-      <div class="max-w-2xl mx-auto px-4 text-center text-xs text-gray-400">
-        注意：仅使用测试网，请勿用于真实交易
-      </div>
-    </footer>
-  </div>
+    </div>
 </template>

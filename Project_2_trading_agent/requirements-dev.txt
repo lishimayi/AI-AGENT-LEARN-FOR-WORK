@@ -1,0 +1,4 @@
+# 测试相关依赖（独立于 requirements.txt，方便在 CI 中按需安装）
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+httpx>=0.24.0

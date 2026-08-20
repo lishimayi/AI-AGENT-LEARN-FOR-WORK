@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     LANGSMITH_TRACING: bool = False
     LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
     LANGSMITH_API_KEY: str = ""
-    LANGSMITH_PROJECT: str = "trading_agent"
+    LANGSMITH_PROJECT: str = "trading"
 
     # OpenAI / 智谱AI 兼容配置
     OPENAI_API_KEY: str = ""
